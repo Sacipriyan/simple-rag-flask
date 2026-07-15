@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flask + ChromaDB RAG System</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; line-height: 1.6; background-color: #f9f9f9; color: #333; }
+        .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 20px; border: 1px solid #eee; }
+        textarea, input[type="text"] { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; font-family: inherit; }
+        button { background-color: #4CAF50; color: white; padding: 10px 15px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; margin-top: 10px; }
+        button:hover { background-color: #45a049; }
+        pre { background: #f1f1f1; padding: 10px; border-radius: 4px; overflow-x: auto; font-size: 0.9em; white-space: pre-wrap; }
+        .label { font-weight: bold; margin-bottom: 5px; display: block; }
+        
+        /* Progress Indicator Styles */
+        .progress-box { display: none; background: #f0f7ff; border: 1px dashed #0066cc; padding: 15px; border-radius: 4px; margin-top: 15px; }
+        .step { display: flex; align-items: center; margin-bottom: 8px; font-size: 0.95em; color: #555; }
+        .step-icon { margin-right: 10px; font-weight: bold; }
+        .step.active { color: #0066cc; font-weight: bold; }
+        .step.done { color: #2e7d32; }
+        .spinner { border: 3px solid #f3f3f3; border-top: 3px solid #0066cc; border-radius: 50%; width: 16px; height: 16px; animation: spin 1s linear infinite; display: inline-block; margin-right: 10px; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+
+    <h1>Simple RAG System 🧪</h1>
+    <p>Upload private knowledge documents to your local ChromaDB, then query them using Google Gemini.</p>
+
+    <!-- Block 1: Feed Knowledge -->
+    <div class="card">
+        <h2>1. Add Custom Knowledge</h2>
+        <div style="margin-bottom: 10px;">
+            <span class="label">Document ID (e.g., doc_1)</span>
+            <input type="text" id="docId" placeholder="e.g., project_guideline_2026">
+        </div>
+        <div>
+            <span class="label">Document Text / Content</span>
+            <textarea id="docText" rows="4" placeholder="Paste custom knowledge or facts here..."></textarea>
+        </div>
+        <button id="addBtn" onclick="addDocument()">Add to Chroma DB</button>
+        
+        <!-- Step-by-Step Progress Box -->
+        <div id="progressBox" class="progress-box">
+            <div id="step1" class="step"><span class="step-icon">⏳</span> Sending document data to backend...</div>
+            <div id="step2" class="step"><span class="step-icon">⏳</span> Embedding and indexing text... <span id="firstRunWarning" style="font-size: 0.85em; color: #b78103; display: none;">(Taking a moment? Downloading local embedding model on first run...)</span></div>
+            <div id="step3" class="step"><span class="step-icon">⏳</span> Saving vector to local storage...</div>
+        </div>
+        
+        <p id="addStatus" style="font-weight: bold; color: #4CAF50; margin-top: 15px;"></p>
+    </div>
+
+    <!-- Block 2: Query System -->
+    <div class="card">
+        <h2>2. Ask a Grounded Question</h2>
+        <div>
+            <input type="text" id="queryText" placeholder="Ask something about the documents you uploaded...">
+        </div>
+        <button onclick="askRAG()">Submit Query</button>
+        
+        <div style="margin-top: 20px;">
+            <h3>Answer:</h3>
+            <div id="answerResult" style="background: #eef9ee; padding: 15px; border-radius: 4px; border-left: 5px solid #4CAF50;">Pending query...</div>
+        </div>
+        
+        <div style="margin-top: 15px;">
+            <h3>Retrieved Source Context:</h3>
+            <pre id="contextResult">No context retrieved yet.</pre>
+        </div>
+    </div>
+
+    <script>
+        async function addDocument() {
+            const id = document.getElementById('docId').value;
+            const text = document.getElementById('docText').value;
+            const statusEl = document.getElementById('addStatus');
+            const progressBox = document.getElementById('progressBox');
+            const addBtn = document.getElementById('addBtn');
+            
+            const step1 = document.getElementById('step1');
+            const step2 = document.getElementById('step2');
+            const step3 = document.getElementById('step3');
+            const firstRunWarning = document.getElementById('firstRunWarning');
+            
+            if (!id || !text) {
+                alert("Please fill in both fields.");
+                return;
+            }
+            
+            // Reset and Show Progress UI
+            statusEl.innerText = "";
+            progressBox.style.display = "block";
+            addBtn.disabled = true;
+            
+            // Step 1: Active
+            step1.className = "step active";
+            step1.innerHTML = '<span class="spinner"></span> Sending document data to backend...';
+            
+            // Trigger a minor delay timer to make the step transition clear to the eye
+            setTimeout(() => {
+                // Step 1: Done, Step 2: Active
+                step1.className = "step done";
+                step1.innerHTML = '✅ Document data sent to backend.';
+                
+                step2.className = "step active";
+                step2.innerHTML = '<span class="spinner"></span> Embedding and indexing text...';
+                
+                // Show a friendly helper warning if step 2 takes longer than 3 seconds (indicating first-time download)
+                setTimeout(() => {
+                    if(step2.className.includes("active")) {
+                        firstRunWarning.style.display = "inline";
+                    }
+                }, 3000);
+            }, 800);
+
+            try {
+                const response = await fetch('/add_document', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id, text })
+                });
+                const data = await response.json();
+                
+                if (response.ok) {
+                    // Step 2: Done, Step 3: Complete
+                    step2.className = "step done";
+                    step2.innerHTML = '✅ Text converted to vector embeddings.';
+                    firstRunWarning.style.display = "none";
+                    
+                    step3.className = "step done";
+                    step3.innerHTML = '✅ Vector saved to local disk.';
+                    
+                    statusEl.style.color = "#2e7d32";
+                    statusEl.innerText = data.message;
+                    
+                    document.getElementById('docId').value = '';
+                    document.getElementById('docText').value = '';
+                } else {
+                    throw new Error(data.error);
+                }
+            } catch (err) {
+                statusEl.style.color = "#c62828";
+                statusEl.innerText = "Error: " + err.message;
+                // Reset active spinner steps to normal icons on fail
+                if(step2.className.includes("active")) {
+                    step2.innerHTML = '❌ Embedding and indexing failed.';
+                }
+            } finally {
+                addBtn.disabled = false;
+            }
+        }
+
+        async function askRAG() {
+            const query = document.getElementById('queryText').value;
+            const answerEl = document.getElementById('answerResult');
+            const contextEl = document.getElementById('contextResult');
+            
+            if (!query) {
+                alert("Please enter a question.");
+                return;
+            }
+            
+            answerEl.innerText = "Searching local DB and generating response...";
+            
+            const response = await fetch('/query', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ query })
+            });
+            const data = await response.json();
+            
+            if (response.ok) {
+                answerEl.innerText = data.answer;
+                contextEl.innerText = JSON.stringify(data.retrieved_context, null, 2);
+            } else {
+                answerEl.innerText = "Error encountered.";
+                contextEl.innerText = data.error;
+            }
+        }
+    </script>
+</body>
+</html>
